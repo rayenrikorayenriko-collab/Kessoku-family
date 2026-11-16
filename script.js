@@ -1406,31 +1406,36 @@
       modal.addEventListener('click', e => {
         if (e.target.closest('[data-review-close]')) closeJoinModal();
       });
-      $('#joinReviewCopy', modal).addEventListener('click', async () => {
+      $('#joinReviewCopy', modal).addEventListener('click', () => {
         if (!pendingJoin) return;
-        // Buka tab kosong dalam gestur klik agar tidak diblokir browser; arahkan setelah copy.
-        const target = window.open('about:blank', '_blank');
         const btn = $('#joinReviewCopy', modal);
+        const job = pendingJoin;
         btn.disabled = true;
         btn.classList.add('is-loading');
-        const copied = await copyRegistrationMessage(pendingJoin.message);
-        if (target) {
-          try { target.location.href = pendingJoin.link; }
-          catch (e) { target.close(); window.location.href = pendingJoin.link; }
-        } else if (copied) {
-          window.location.href = pendingJoin.link;
-        } else {
-          window.location.href = pendingJoin.link;
-        }
-        const apiResult = KSF.apiConfigured && KSF.apiConfigured()
-          ? KSF.apiSend('POST', '/join', pendingJoin.payload).then(() => true).catch(() => false)
-          : Promise.resolve(null);
-        const stored = await apiResult;
-        if (stored === false) showToast('Data belum tersimpan', 'Tautan grup tetap dibuka, tetapi database belum menerima data.');
-        else showToast(copied ? 'Berhasil disalin' : 'Siap bergabung', copied ? 'Ringkasan tersalin. Tempelkan di grup bila diperlukan.' : 'Jika belum tersalin, salin ringkasan secara manual.');
-        closeJoinModal();
-        btn.disabled = false;
-        btn.classList.remove('is-loading');
+
+        // Copy harus terjadi langsung di dalam gestur klik. Tidak membuka about:blank.
+        const copied = copyRegistrationMessageSync(job.message);
+        const finish = (ok) => {
+          if (!ok) {
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+            showToast('Belum berhasil disalin', 'Clipboard ditolak browser. Pilih teks ringkasan secara manual; grup belum dibuka.');
+            const summary = $('#joinReviewSummary', modal);
+            summary.focus();
+            summary.select?.();
+            return;
+          }
+          showToast('Berhasil disalin', 'Jawaban tersalin. Membuka undangan gen pilihanmu…');
+          if (KSF.apiConfigured && KSF.apiConfigured()) {
+            KSF.apiSend('POST', '/join', job.payload).catch(() => {});
+          }
+          window.location.assign(job.link);
+        };
+
+        if (copied) { finish(true); return; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(job.message).then(() => finish(true)).catch(() => finish(false));
+        } else finish(false);
       });
       return modal;
     }
@@ -1491,18 +1496,21 @@
       openJoinModal(message, link, payload);
     });
 
-    async function copyRegistrationMessage(message) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        try { await navigator.clipboard.writeText(message); return true; } catch (e) { /* fallback */ }
-      }
+    function copyRegistrationMessageSync(message) {
       const ta = document.createElement('textarea');
-      ta.value = message; ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed'; ta.style.opacity = '0';
-      document.body.appendChild(ta); ta.select();
+      ta.value = message;
+      ta.setAttribute('readonly', '');
+      ta.setAttribute('aria-label', 'Ringkasan pendaftaran untuk disalin');
+      ta.style.position = 'fixed';
+      ta.style.left = '0'; ta.style.top = '0';
+      ta.style.width = '1px'; ta.style.height = '1px';
+      ta.style.padding = '0'; ta.style.border = '0';
+      ta.style.opacity = '0.01'; ta.style.fontSize = '16px';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length);
       let copied = false;
-      try { copied = document.execCommand('copy'); } catch (e) { /* fallback */ }
+      try { copied = document.execCommand('copy'); } catch (e) { copied = false; }
       ta.remove();
-      if (!copied) window.prompt('Salin ringkasan ini untuk ditempel di WhatsApp:', message);
       return copied;
     }
   }
