@@ -683,10 +683,13 @@
       KSF.apiSend(method, path, payload).catch(() => {});
     }
     function pushHashtag(method, tag, payload) {
-      if (!(KSF.apiConfigured && KSF.apiConfigured())) return;
-      const path = '/hashtags' + (method === 'DELETE' ? '/' + encodeURIComponent(tag) : '');
+      if (!(KSF.apiConfigured && KSF.apiConfigured())) return Promise.resolve(null);
+      // Supabase dan REST API membutuhkan identitas hashtag pada URL saat
+      // memperbarui atau menghapus satu baris.
+      const path = '/hashtags' + ((method === 'PUT' || method === 'DELETE')
+        ? '/' + encodeURIComponent(tag) : '');
       const body = method === 'POST' ? { tag: tag } : (payload || null);
-      KSF.apiSend(method, path, body).catch(() => {});
+      return KSF.apiSend(method, path, body);
     }
     function pushCN(method, id, payload) {
       if (!(KSF.apiConfigured && KSF.apiConfigured())) return;
@@ -1048,14 +1051,46 @@
       pushHashtag('DELETE', del.dataset.tag);
       showToast('Hashtag dihapus', `${del.dataset.tag} tidak lagi dipantau.`);
     });
-    // Ubah jumlah pemakaian manual
-    if (tagList) tagList.addEventListener('change', (e) => {
+    // Ubah jumlah pemakaian manual dan pastikan hasilnya benar-benar tersimpan.
+    if (tagList) tagList.addEventListener('change', async (e) => {
       const inp = e.target.closest('.tagrow-admin__num');
       if (!inp || !(KSF.updateHashtag)) return;
-      const val = Number(inp.value) || 0;
-      KSF.updateHashtag(inp.dataset.count, { count: val });
-      pushHashtag('PUT', inp.dataset.count, { count: val });
-      showToast('Jumlah diperbarui', `${inp.dataset.count} = ${fmt(val)} post.`);
+
+      const tag = inp.dataset.count;
+      const val = Math.max(0, Math.floor(Number(inp.value) || 0));
+      inp.value = String(val);
+      inp.disabled = true;
+
+      try {
+        if (KSF.apiConfigured && KSF.apiConfigured()) {
+          // Simpan ke server dahulu. Jangan menganggap berhasil sebelum API merespons.
+          await pushHashtag('PUT', tag, { count: val });
+          await KSF.refreshStats();
+          const savedTag = KSF.getHashtags().find(item =>
+            String(item.tag).toLowerCase() === String(tag).toLowerCase()
+          );
+          if (!savedTag || Number(savedTag.count) !== val) {
+            throw new Error('persist-verification-failed');
+          }
+        } else {
+          // Mode lokal/demo: simpan di browser seperti sebelumnya.
+          KSF.updateHashtag(tag, { count: val });
+        }
+
+        renderTags();
+        window.dispatchEvent(new Event('ksf:hashtag-updated'));
+        showToast('Jumlah diperbarui', `${tag} = ${fmt(val)} post.`);
+      } catch (err) {
+        // Muat ulang angka server agar input tidak menampilkan angka yang gagal disimpan.
+        try {
+          await KSF.refreshStats();
+        } catch (_) {}
+        renderTags();
+        showToast('Gagal menyimpan jumlah', 'Perubahan tidak tersimpan. Periksa koneksi database dan izin UPDATE tabel hashtags.');
+      } finally {
+        const current = $('#tagList .tagrow-admin__num[data-count="' + CSS.escape(tag) + '"]');
+        if (current) current.disabled = false;
+      }
     });
 
     const addTagForm = $('#addTagForm');
