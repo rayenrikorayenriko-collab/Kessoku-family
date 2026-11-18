@@ -314,6 +314,7 @@ window.KSF = (function () {
   let authClient = null;
   let authSession = null;
   let signedInUser = null;
+  let authError = null;
 
   function getAuthClient() {
     if (authClient) return authClient;
@@ -323,9 +324,36 @@ window.KSF = (function () {
     authClient = window.supabase.createClient(window.KSF_CONFIG.projectUrl(), apiKey(), {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
     });
-    authClient.auth.onAuthStateChange((_event, session) => {
+    // Supabase memulihkan sesi secara asynchronous. Jangan hanya menunggu
+    // getSession(): event INITIAL_SESSION bisa datang setelah halaman dirender.
+    // Panggil loadRole di task terpisah agar tidak menjalankan request Supabase
+    // di dalam callback onAuthStateChange.
+    authClient.auth.onAuthStateChange((event, session) => {
       authSession = session || null;
-      if (!session) signedInUser = null;
+      if (!session) {
+        signedInUser = null;
+        authError = null;
+        window.dispatchEvent(new Event('ksf:auth-updated'));
+        return;
+      }
+      if (['INITIAL_SESSION', 'SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED'].includes(event)) {
+        const expectedSession = session;
+        setTimeout(() => {
+          loadRole(expectedSession).then((user) => {
+            if (authSession && authSession.user && authSession.user.id === expectedSession.user.id) {
+              signedInUser = user;
+              authError = null;
+              window.dispatchEvent(new Event('ksf:auth-updated'));
+            }
+          }).catch((err) => {
+            if (authSession && authSession.user && authSession.user.id === expectedSession.user.id) {
+              signedInUser = null;
+              authError = err;
+              window.dispatchEvent(new Event('ksf:auth-updated'));
+            }
+          });
+        }, 0);
+      }
     });
     return authClient;
   }
@@ -361,13 +389,25 @@ window.KSF = (function () {
   async function initAuth() {
     const client = getAuthClient();
     const { data, error } = await client.auth.getSession();
-    if (error) throw error;
+    if (error) {
+      authError = error;
+      throw error;
+    }
     if (data.session) {
-      try { await loadRole(data.session); }
-      catch (e) { signedInUser = null; }
+      try {
+        const user = await loadRole(data.session);
+        signedInUser = user;
+        authError = null;
+      } catch (e) {
+        signedInUser = null;
+        authError = e;
+        throw e;
+      }
     }
     return signedInUser;
   }
+
+  function getAuthError() { return authError; }
 
   function apiHeaders(json) {
     const h = { Accept: 'application/json' };
@@ -587,7 +627,7 @@ window.KSF = (function () {
     getCNs, addCN, removeCN, DEFAULT_CNS,
     totalMembers, localStats, getTotalOverride, setTotalOverride, clearTotalOverride,
     apiConfigured, apiGet, apiSend, refreshStats, isSupabase, pushTotal, clearRemoteTotal, pushSetting,
-    getAdmins, addAdmin, removeAdmin, accounts, login, logout, currentUser, isOwner, initAuth, OWNER,
+    getAdmins, addAdmin, removeAdmin, accounts, login, logout, currentUser, isOwner, initAuth, getAuthError, OWNER,
     KEY, LOGO_KEY, ADMINS_KEY, SESSION_KEY, GEN_KEY, TAG_KEY, STATS_KEY, CN_KEY, TOTAL_KEY, TEAM_KEY,
     GEN_PHOTO_KEY, CUSTOM_LINKS_KEY, CUSTOM_LINK_PHOTO_KEY
   };

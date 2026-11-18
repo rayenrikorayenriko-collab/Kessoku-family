@@ -1161,7 +1161,16 @@
         .catch((err) => setApiStatus('Gagal terhubung. Cek URL, Anon Key, nama tabel, dan policy RLS. (' + (err && err.message ? err.message : '') + ')'));
     });
 
-    // Pulihkan sesi Supabase dan periksa role sebelum membuka panel.
+    // Pulihkan sesi Supabase. Event INITIAL_SESSION dapat tiba setelah
+    // getSession() selesai, jadi panel juga harus dirender ulang saat role siap.
+    window.addEventListener('ksf:auth-updated', () => {
+      renderSession();
+      const authErr = KSF.getAuthError && KSF.getAuthError();
+      if (authErr) {
+        showToast('Sesi belum bisa dibuka', authErr.message || 'Periksa role akun dan konfigurasi Supabase.');
+      }
+    });
+
     loginGate.hidden = false;
     settingsContent.hidden = true;
     KSF.initAuth()
