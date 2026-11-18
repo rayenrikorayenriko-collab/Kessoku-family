@@ -765,43 +765,67 @@
     }
 
     const loginForm = $('#loginForm');
-    if (loginForm) loginForm.addEventListener('submit', async (e) => {
+    if (loginForm) loginForm.addEventListener('submit', (e) => {
       e.preventDefault();
-      const btn = $('#loginBtn');
-      if (btn) btn.disabled = true;
-      try {
-        const session = await KSF.login($('#loginUser').value, $('#loginPass').value);
-        // Tab Owner/Admin hanya membatasi jenis akun yang boleh masuk ke tab tersebut.
-        if (loginMode === 'owner' && session.role !== 'owner') {
-          await KSF.logout();
-          throw new Error('Akun ini bukan Owner. Pilih tab Admin.');
-        }
-        if (loginMode === 'admin' && session.role !== 'admin') {
-          await KSF.logout();
-          throw new Error('Akun ini bukan Admin. Pilih tab Owner.');
-        }
-        loginForm.reset();
-        renderSession();
-        showToast('Berhasil masuk', `Selamat datang, ${session.name}.`);
-      } catch (err) {
-        showToast('Login gagal', err && err.message ? err.message : 'Periksa email, password, dan role akun.');
+      const session = KSF.login($('#loginUser').value, $('#loginPass').value);
+      if (!session) {
+        showToast('Login gagal', 'Nama/username atau password salah.');
         const card = $('.login-card', loginGate);
         if (card) { card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake'); }
-      } finally {
-        if (btn) btn.disabled = false;
+        return;
       }
+      // Pisahkan area Owner & Admin
+      if (loginMode === 'owner' && session.role !== 'owner') {
+        KSF.logout();
+        showToast('Bukan akun owner', 'Akun ini bukan owner. Pilih tab Admin.');
+        return;
+      }
+      if (loginMode === 'admin' && session.role === 'owner') {
+        KSF.logout();
+        showToast('Itu akun owner', 'Masuk lewat tab Owner ya.');
+        return;
+      }
+      loginForm.reset();
+      renderSession();
+      showToast('Berhasil masuk', `Selamat datang, ${session.name}.`);
     });
 
     const logoutBtn = $('#logoutBtn');
-    if (logoutBtn) logoutBtn.addEventListener('click', async () => {
-      try { await KSF.logout(); }
-      finally {
-        renderSession();
-        showToast('Logout', 'Kamu sudah keluar dari panel setting.');
-      }
+    if (logoutBtn) logoutBtn.addEventListener('click', () => {
+      KSF.logout();
+      renderSession();
+      showToast('Logout', 'Kamu sudah keluar dari panel setting.');
     });
 
-    // Akun login tidak dibuat/dihapus dari browser. Gunakan Supabase Auth + SQL role.
+    const accountList = $('#accountList');
+    if (accountList) accountList.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-remove]');
+      if (!btn) return;
+      if (!(KSF.isOwner && KSF.isOwner())) { showToast('Tidak diizinkan', 'Hanya owner yang bisa menghapus akun.'); return; }
+      const id = btn.dataset.remove;
+      const acc = KSF.getAdmins().find(a => a.id === id);
+      KSF.removeAdmin(id);
+      renderAccounts();
+      showToast('Akun dihapus', `Akun ${acc ? acc.name : ''} berhasil dihapus.`);
+    });
+
+    const addAdminForm = $('#addAdminForm');
+    if (addAdminForm) addAdminForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!(KSF.isOwner && KSF.isOwner())) { showToast('Tidak diizinkan', 'Hanya owner yang bisa menambah akun.'); return; }
+      const name = $('#adminName').value.trim();
+      const username = $('#adminUser').value.trim();
+      const password = $('#adminPass').value;
+      if (!name || !username || !password) { showToast('Belum lengkap', 'Isi nama, username, dan password.'); return; }
+      const taken = KSF.accounts().some(a => a.username.toLowerCase() === username.toLowerCase());
+      if (taken) { showToast('Username dipakai', 'Gunakan username lain.'); return; }
+      const roleSel = $('#adminRole');
+      const role = (roleSel && roleSel.value) || 'admin';
+      KSF.addAdmin({ id: 'adm_' + Date.now().toString(36), name, username, password, role: role });
+      addAdminForm.reset();
+      renderAccounts();
+      showToast('Akun dibuat', `${name} ditambahkan sebagai ${ROLE_LABEL[role] || 'Admin'}.`);
+    });
 
     /* ---- Kelola team (admin/keterangan yang tampil di halaman Team) ---- */
     function renderTeamAdmin() {
@@ -1161,24 +1185,7 @@
         .catch((err) => setApiStatus('Gagal terhubung. Cek URL, Anon Key, nama tabel, dan policy RLS. (' + (err && err.message ? err.message : '') + ')'));
     });
 
-    // Pulihkan sesi Supabase. Event INITIAL_SESSION dapat tiba setelah
-    // getSession() selesai, jadi panel juga harus dirender ulang saat role siap.
-    window.addEventListener('ksf:auth-updated', () => {
-      renderSession();
-      const authErr = KSF.getAuthError && KSF.getAuthError();
-      if (authErr) {
-        showToast('Sesi belum bisa dibuka', authErr.message || 'Periksa role akun dan konfigurasi Supabase.');
-      }
-    });
-
-    loginGate.hidden = false;
-    settingsContent.hidden = true;
-    KSF.initAuth()
-      .then(() => renderSession())
-      .catch((err) => {
-        renderSession();
-        showToast('Supabase Auth', err && err.message ? err.message : 'Periksa konfigurasi Supabase.');
-      });
+    renderSession();
   }
 
   /* ---------- Form registrasi ---------- */

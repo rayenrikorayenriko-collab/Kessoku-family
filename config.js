@@ -42,9 +42,6 @@ window.KSF_CONFIG = (function () {
     const v = (localStorage.getItem(API_KEY) || '').trim();
     return normalize(v || DEFAULT_BASE);
   }
-  function projectUrl() {
-    return base().replace(/\/rest\/v1$/i, '');
-  }
   function setBase(url) {
     localStorage.setItem(API_KEY, normalize(url));
   }
@@ -63,5 +60,5 @@ window.KSF_CONFIG = (function () {
     localStorage.setItem(REFRESH_KEY, String(v && v >= 3000 ? v : DEFAULT_REFRESH));
   }
 
-  return { base, projectUrl, setBase, key, setKey, refreshMs, setRefreshMs, DEFAULT_REFRESH, API_KEY, KEY_NAME, REFRESH_KEY };
+  return { base, setBase, key, setKey, refreshMs, setRefreshMs, DEFAULT_REFRESH, API_KEY, KEY_NAME, REFRESH_KEY };
 })();

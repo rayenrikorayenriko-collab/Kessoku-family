@@ -32,7 +32,7 @@ window.KSF = (function () {
   ];
 
   // Akun owner utama (bawaan)
-  // Keamanan: tidak ada kredensial owner bawaan di frontend. Login lokal dinonaktifkan.
+  const OWNER = { id: 'owner', name: 'RAYENRIKO', username: 'RAYENRIKO', password: 'RAYENRIKO1', role: 'owner' };
 
   const TEAM_KEY = 'ksf_team_v1';
 
@@ -311,109 +311,11 @@ window.KSF = (function () {
     const b = (window.KSF_CONFIG && window.KSF_CONFIG.base()) || '';
     return /supabase\.(co|in)/i.test(b);
   }
-  let authClient = null;
-  let authSession = null;
-  let signedInUser = null;
-  let authError = null;
-
-  function getAuthClient() {
-    if (authClient) return authClient;
-    if (!window.supabase || !window.KSF_CONFIG || !window.KSF_CONFIG.projectUrl() || !apiKey()) {
-      throw new Error('Supabase Auth belum dikonfigurasi. Periksa Project URL dan anon/publishable key.');
-    }
-    authClient = window.supabase.createClient(window.KSF_CONFIG.projectUrl(), apiKey(), {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
-    });
-    // Supabase memulihkan sesi secara asynchronous. Jangan hanya menunggu
-    // getSession(): event INITIAL_SESSION bisa datang setelah halaman dirender.
-    // Panggil loadRole di task terpisah agar tidak menjalankan request Supabase
-    // di dalam callback onAuthStateChange.
-    authClient.auth.onAuthStateChange((event, session) => {
-      authSession = session || null;
-      if (!session) {
-        signedInUser = null;
-        authError = null;
-        window.dispatchEvent(new Event('ksf:auth-updated'));
-        return;
-      }
-      if (['INITIAL_SESSION', 'SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED'].includes(event)) {
-        const expectedSession = session;
-        setTimeout(() => {
-          loadRole(expectedSession).then((user) => {
-            if (authSession && authSession.user && authSession.user.id === expectedSession.user.id) {
-              signedInUser = user;
-              authError = null;
-              window.dispatchEvent(new Event('ksf:auth-updated'));
-            }
-          }).catch((err) => {
-            if (authSession && authSession.user && authSession.user.id === expectedSession.user.id) {
-              signedInUser = null;
-              authError = err;
-              window.dispatchEvent(new Event('ksf:auth-updated'));
-            }
-          });
-        }, 0);
-      }
-    });
-    return authClient;
-  }
-
-  async function loadRole(session) {
-    if (!session || !session.user) { signedInUser = null; return null; }
-    authSession = session;
-    const base = window.KSF_CONFIG.base();
-    const r = await fetch(base + '/ksf_user_roles?select=role&user_id=eq.' + encodeURIComponent(session.user.id), {
-      headers: {
-        Accept: 'application/json',
-        apikey: apiKey(),
-        Authorization: 'Bearer ' + session.access_token
-      }
-    });
-    if (!r.ok) throw new Error('Tidak bisa memeriksa role akun (HTTP ' + r.status + '). Pastikan SQL hardening sudah dijalankan.');
-    const rows = await r.json();
-    const role = rows && rows[0] && rows[0].role;
-    if (!['owner', 'admin'].includes(role)) {
-      signedInUser = null;
-      await getAuthClient().auth.signOut();
-      throw new Error('Akun ini belum memiliki role Owner/Admin di tabel ksf_user_roles.');
-    }
-    signedInUser = {
-      id: session.user.id,
-      email: session.user.email || '',
-      name: (session.user.user_metadata && (session.user.user_metadata.full_name || session.user.user_metadata.name)) || session.user.email || 'Pengelola',
-      role
-    };
-    return signedInUser;
-  }
-
-  async function initAuth() {
-    const client = getAuthClient();
-    const { data, error } = await client.auth.getSession();
-    if (error) {
-      authError = error;
-      throw error;
-    }
-    if (data.session) {
-      try {
-        const user = await loadRole(data.session);
-        signedInUser = user;
-        authError = null;
-      } catch (e) {
-        signedInUser = null;
-        authError = e;
-        throw e;
-      }
-    }
-    return signedInUser;
-  }
-
-  function getAuthError() { return authError; }
-
   function apiHeaders(json) {
     const h = { Accept: 'application/json' };
     if (json) h['Content-Type'] = 'application/json';
     const k = apiKey();
-    if (k) { h['apikey'] = k; h['Authorization'] = 'Bearer ' + ((authSession && authSession.access_token) || k); }
+    if (k) { h['apikey'] = k; h['Authorization'] = 'Bearer ' + k; }
     return h;
   }
   // Ubah path gaya REST -> endpoint PostgREST Supabase
@@ -580,30 +482,23 @@ window.KSF = (function () {
   function saveAdmins(list) { localStorage.setItem(ADMINS_KEY, JSON.stringify(list)); }
   function addAdmin(a) { const l = getAdmins(); l.push(a); saveAdmins(l); return l; }
   function removeAdmin(id) { const l = getAdmins().filter(x => x.id !== id); saveAdmins(l); return l; }
-  function accounts() { return []; } // Kredensial akun tidak boleh dikelola/diotentikasi dari browser.
+  function accounts() { return [OWNER].concat(getAdmins()); }
 
   // ---- Sesi / login ----
-  // Fail-closed: sessionStorage/localStorage tidak dapat menjadi bukti login.
-  // Panel tetap terkunci sampai autentikasi Supabase Auth + pemeriksaan role
-  // server-side diintegrasikan. Jangan mengembalikan login berbasis JS.
-  function currentUser() { return signedInUser; }
-  async function login(email, password) {
-    const client = getAuthClient();
-    const { data, error } = await client.auth.signInWithPassword({
-      email: String(email || '').trim(),
-      password: String(password || '')
-    });
-    if (error) throw error;
-    return await loadRole(data.session);
+  function currentUser() {
+    try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); }
+    catch (e) { return null; }
   }
-  async function logout() {
-    const client = getAuthClient();
-    const { error } = await client.auth.signOut();
-    authSession = null;
-    signedInUser = null;
-    if (error) throw error;
+  function login(username, password) {
+    const u = (username || '').trim().toLowerCase();
+    const acc = accounts().find(a => a.username.toLowerCase() === u && a.password === password);
+    if (!acc) return null;
+    const session = { id: acc.id, name: acc.name, username: acc.username, role: acc.role };
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    return session;
   }
-  function isOwner() { return !!(signedInUser && signedInUser.role === 'owner'); }
+  function logout() { sessionStorage.removeItem(SESSION_KEY); }
+  function isOwner() { const u = currentUser(); return !!u && u.role === 'owner'; }
 
   // Avatar: pakai foto bila ada, kalau tidak tampilkan inisial nama
   function avatarHTML(item, cls) {
@@ -627,7 +522,7 @@ window.KSF = (function () {
     getCNs, addCN, removeCN, DEFAULT_CNS,
     totalMembers, localStats, getTotalOverride, setTotalOverride, clearTotalOverride,
     apiConfigured, apiGet, apiSend, refreshStats, isSupabase, pushTotal, clearRemoteTotal, pushSetting,
-    getAdmins, addAdmin, removeAdmin, accounts, login, logout, currentUser, isOwner, initAuth, getAuthError, OWNER,
+    getAdmins, addAdmin, removeAdmin, accounts, login, logout, currentUser, isOwner, OWNER,
     KEY, LOGO_KEY, ADMINS_KEY, SESSION_KEY, GEN_KEY, TAG_KEY, STATS_KEY, CN_KEY, TOTAL_KEY, TEAM_KEY,
     GEN_PHOTO_KEY, CUSTOM_LINKS_KEY, CUSTOM_LINK_PHOTO_KEY
   };
