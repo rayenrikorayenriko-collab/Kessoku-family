@@ -311,11 +311,69 @@ window.KSF = (function () {
     const b = (window.KSF_CONFIG && window.KSF_CONFIG.base()) || '';
     return /supabase\.(co|in)/i.test(b);
   }
+  let authClient = null;
+  let authSession = null;
+  let signedInUser = null;
+
+  function getAuthClient() {
+    if (authClient) return authClient;
+    if (!window.supabase || !window.KSF_CONFIG || !window.KSF_CONFIG.projectUrl() || !apiKey()) {
+      throw new Error('Supabase Auth belum dikonfigurasi. Periksa Project URL dan anon/publishable key.');
+    }
+    authClient = window.supabase.createClient(window.KSF_CONFIG.projectUrl(), apiKey(), {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+    });
+    authClient.auth.onAuthStateChange((_event, session) => {
+      authSession = session || null;
+      if (!session) signedInUser = null;
+    });
+    return authClient;
+  }
+
+  async function loadRole(session) {
+    if (!session || !session.user) { signedInUser = null; return null; }
+    authSession = session;
+    const base = window.KSF_CONFIG.base();
+    const r = await fetch(base + '/ksf_user_roles?select=role&user_id=eq.' + encodeURIComponent(session.user.id), {
+      headers: {
+        Accept: 'application/json',
+        apikey: apiKey(),
+        Authorization: 'Bearer ' + session.access_token
+      }
+    });
+    if (!r.ok) throw new Error('Tidak bisa memeriksa role akun (HTTP ' + r.status + '). Pastikan SQL hardening sudah dijalankan.');
+    const rows = await r.json();
+    const role = rows && rows[0] && rows[0].role;
+    if (!['owner', 'admin'].includes(role)) {
+      signedInUser = null;
+      await getAuthClient().auth.signOut();
+      throw new Error('Akun ini belum memiliki role Owner/Admin di tabel ksf_user_roles.');
+    }
+    signedInUser = {
+      id: session.user.id,
+      email: session.user.email || '',
+      name: (session.user.user_metadata && (session.user.user_metadata.full_name || session.user.user_metadata.name)) || session.user.email || 'Pengelola',
+      role
+    };
+    return signedInUser;
+  }
+
+  async function initAuth() {
+    const client = getAuthClient();
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
+    if (data.session) {
+      try { await loadRole(data.session); }
+      catch (e) { signedInUser = null; }
+    }
+    return signedInUser;
+  }
+
   function apiHeaders(json) {
     const h = { Accept: 'application/json' };
     if (json) h['Content-Type'] = 'application/json';
     const k = apiKey();
-    if (k) { h['apikey'] = k; h['Authorization'] = 'Bearer ' + k; }
+    if (k) { h['apikey'] = k; h['Authorization'] = 'Bearer ' + ((authSession && authSession.access_token) || k); }
     return h;
   }
   // Ubah path gaya REST -> endpoint PostgREST Supabase
@@ -488,10 +546,24 @@ window.KSF = (function () {
   // Fail-closed: sessionStorage/localStorage tidak dapat menjadi bukti login.
   // Panel tetap terkunci sampai autentikasi Supabase Auth + pemeriksaan role
   // server-side diintegrasikan. Jangan mengembalikan login berbasis JS.
-  function currentUser() { return null; }
-  function login(_username, _password) { return null; }
-  function logout() { try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {} }
-  function isOwner() { return false; }
+  function currentUser() { return signedInUser; }
+  async function login(email, password) {
+    const client = getAuthClient();
+    const { data, error } = await client.auth.signInWithPassword({
+      email: String(email || '').trim(),
+      password: String(password || '')
+    });
+    if (error) throw error;
+    return await loadRole(data.session);
+  }
+  async function logout() {
+    const client = getAuthClient();
+    const { error } = await client.auth.signOut();
+    authSession = null;
+    signedInUser = null;
+    if (error) throw error;
+  }
+  function isOwner() { return !!(signedInUser && signedInUser.role === 'owner'); }
 
   // Avatar: pakai foto bila ada, kalau tidak tampilkan inisial nama
   function avatarHTML(item, cls) {
@@ -515,7 +587,7 @@ window.KSF = (function () {
     getCNs, addCN, removeCN, DEFAULT_CNS,
     totalMembers, localStats, getTotalOverride, setTotalOverride, clearTotalOverride,
     apiConfigured, apiGet, apiSend, refreshStats, isSupabase, pushTotal, clearRemoteTotal, pushSetting,
-    getAdmins, addAdmin, removeAdmin, accounts, login, logout, currentUser, isOwner, OWNER,
+    getAdmins, addAdmin, removeAdmin, accounts, login, logout, currentUser, isOwner, initAuth, OWNER,
     KEY, LOGO_KEY, ADMINS_KEY, SESSION_KEY, GEN_KEY, TAG_KEY, STATS_KEY, CN_KEY, TOTAL_KEY, TEAM_KEY,
     GEN_PHOTO_KEY, CUSTOM_LINKS_KEY, CUSTOM_LINK_PHOTO_KEY
   };
