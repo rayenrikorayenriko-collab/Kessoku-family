@@ -32,7 +32,7 @@ window.KSF = (function () {
   ];
 
   // Akun owner utama (bawaan)
-  const OWNER = { id: 'owner', name: 'RAYENRIKO', username: 'RAYENRIKO', password: 'RAYENRIKO1', role: 'owner' };
+  // Keamanan: tidak ada kredensial owner bawaan di frontend. Login lokal dinonaktifkan.
 
   const TEAM_KEY = 'ksf_team_v1';
 
@@ -482,23 +482,16 @@ window.KSF = (function () {
   function saveAdmins(list) { localStorage.setItem(ADMINS_KEY, JSON.stringify(list)); }
   function addAdmin(a) { const l = getAdmins(); l.push(a); saveAdmins(l); return l; }
   function removeAdmin(id) { const l = getAdmins().filter(x => x.id !== id); saveAdmins(l); return l; }
-  function accounts() { return [OWNER].concat(getAdmins()); }
+  function accounts() { return []; } // Kredensial akun tidak boleh dikelola/diotentikasi dari browser.
 
   // ---- Sesi / login ----
-  function currentUser() {
-    try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); }
-    catch (e) { return null; }
-  }
-  function login(username, password) {
-    const u = (username || '').trim().toLowerCase();
-    const acc = accounts().find(a => a.username.toLowerCase() === u && a.password === password);
-    if (!acc) return null;
-    const session = { id: acc.id, name: acc.name, username: acc.username, role: acc.role };
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    return session;
-  }
-  function logout() { sessionStorage.removeItem(SESSION_KEY); }
-  function isOwner() { const u = currentUser(); return !!u && u.role === 'owner'; }
+  // Fail-closed: sessionStorage/localStorage tidak dapat menjadi bukti login.
+  // Panel tetap terkunci sampai autentikasi Supabase Auth + pemeriksaan role
+  // server-side diintegrasikan. Jangan mengembalikan login berbasis JS.
+  function currentUser() { return null; }
+  function login(_username, _password) { return null; }
+  function logout() { try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {} }
+  function isOwner() { return false; }
 
   // Avatar: pakai foto bila ada, kalau tidak tampilkan inisial nama
   function avatarHTML(item, cls) {

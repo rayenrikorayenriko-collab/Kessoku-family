@@ -769,7 +769,7 @@
       e.preventDefault();
       const session = KSF.login($('#loginUser').value, $('#loginPass').value);
       if (!session) {
-        showToast('Login gagal', 'Nama/username atau password salah.');
+        showToast('Login dinonaktifkan', 'Panel dikunci demi keamanan. Aktifkan Supabase Auth terlebih dahulu.');
         const card = $('.login-card', loginGate);
         if (card) { card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake'); }
         return;
